@@ -1,28 +1,33 @@
-#!/usr/bin/python2.7
-# vim:fileencoding=UTF-8:ts=4:sw=4:sta:et:sts=4:ai
+#!/usr/bin/python3
+#-*- coding: UTF-8 -*-
 
-__license__   = 'GPL v3'
-__copyright__ = '2014, Rex<talebook@foxmail.com>'
+__license__ = 'GPL v3'
+__copyright__ = '2021, Rex<talebook@foxmail.com>'
 __docformat__ = 'restructuredtext en'
 
 import os, re, sys, json, logging, datetime, requests
-from urllib import urlopen
+from io import StringIO
+from urllib.request import urlopen
 
 REMOVES = [
-        re.compile(u'^\([^)]*\)\s*'),
-        re.compile(u'^\[[^\]]*\]\s*'),
-        re.compile(u'^【[^】]*】\s*'),
-        re.compile(u'^（[^）]*）\s*')
-        ]
+    re.compile(u'^\([^)]*\)\s*'),
+    re.compile(u'^\[[^\]]*\]\s*'),
+    re.compile(u'^【[^】]*】\s*'),
+    re.compile(u'^（[^）]*）\s*')
+]
 
 CHROME_HEADERS = {
-        'Accept-Language': 'zh-CN,zh;q=0.8,zh-TW;q=0.6',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/66.0.3359.139 Safari/537.36',
-        }
+    'Accept-Language':
+        'zh-CN,zh;q=0.8,zh-TW;q=0.6',
+    'Accept':
+        'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+    'User-Agent':
+        'Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/66.0.3359.139 Safari/537.36',
+}
 
 
 class DoubanBookApi(object):
+
     def __init__(self, apikey, copy_image=True, manual_select=False):
         self.apikey = apikey
         self.copy_image = copy_image
@@ -30,8 +35,10 @@ class DoubanBookApi(object):
 
     def author(self, book):
         author = book['author']
-        if not author: return None
-        if isinstance(author, list): return author[0]
+        if not author:
+            return None
+        if isinstance(author, list):
+            return author[0]
         return author
 
     def get_book_by_isbn(self, isbn):
@@ -40,33 +47,39 @@ class DoubanBookApi(object):
         args = {'apikey': self.apikey}
         rsp = requests.get(url, headers=CHROME_HEADERS, params=args).json()
         if 'code' in rsp and rsp['code'] != 0:
-            logging.error("******** douban API error: %d-%s **********" % (rsp['code'], rsp['msg']) )
+            logging.error("******** douban API error: **********\nError:%s\nMessage:%s" % (rsp['code'], rsp['msg']))
             return None
         return rsp
 
     def get_books_by_title(self, title, author=None):
         url = "https://api.douban.com/v2/book/search"
         q = title + " " + author if author else title
-        args = {'apikey': self.apikey, 'q': q.encode('UTF-8') }
+        args = {'apikey': self.apikey, 'q': q.encode('UTF-8')}
         rsp = requests.get(url, headers=CHROME_HEADERS, params=args).json()
         if 'code' in rsp and rsp['code'] != 0:
-            logging.error("******** douban API error: %d-%s **********" % (rsp['code'], rsp['msg']) )
+            logging.error("******** douban API error: **********\nError:%s\nMessage:%s" % (rsp['code'], rsp['msg']))
             return None
 
         return rsp['books']
 
     def get_book_by_title(self, title, author=None):
         books = self.get_book_by_title(title, author)
-        if not books: return None
+        if not books:
+            return None
         for b in books:
-            if not b['author']: b['author'] = b['translator']
-            if b['title'] != title and b['title']+":"+b['subtitle'] != title: continue
-            if not author: return b
-            if self.author(b) == author: return b
+            if not b['author']:
+                b['author'] = b['translator']
+            if b['title'] != title and b['title'] + ":" + b['subtitle'] != title:
+                continue
+            if not author:
+                return b
+            if self.author(b) == author:
+                return b
 
         # for console tools
-        if not self.manual_select: return None
-        print ("\nSearch: <<%s>>, %s" % (title, author))
+        if not self.manual_select:
+            return None
+        print("\nSearch: <<%s>>, %s" % (title, author))
         for idx, b in enumerate(books):
             t = b['title']
             t += ":" + b['subtitle'] if b['subtitle'] else ""
@@ -105,35 +118,44 @@ class DoubanBookApi(object):
             for author in book['author']:
                 for r in REMOVES:
                     author = r.sub("", author)
-                authors.append( author )
-        if not authors: authors = [ u'佚名' ]
+                authors.append(author)
+        if not authors:
+            authors = [u'佚名']
 
+        mi = {}
+        mi["title"] = book['title']
+        mi["authors"] = authors
+        mi["author_sort"] = mi["authors"][0]
+        mi["publisher"] = book['publisher']
+        mi["comments"] = book['summary']
+        mi["isbn"] = book.get('isbn13', None)
+        mi["tags"] = [t['name'] for t in book['tags']][:8]
+        mi["rating"] = int(float(book['rating']['average']))
+        mi["pubdate"] = self.str2date(book['pubdate'])
+        mi["timestamp"] = datetime.datetime.now()
+        mi["douban_id"] = book['id']
+        mi["douban_author_intro"] = book['author_intro']
+        mi["douban_subtitle"] = book.get('subtitle', None)
+        mi["website"] = "https://book.douban.com/isbn/%s" % mi["isbn"]
+        mi["source"] = u'豆瓣'
+        mi["cover_url"] = book['images']['large']
+        return self._to_calibre_meta(mi)
+
+    def _to_calibre_meta(self, mi):
         from calibre.ebooks.metadata.book.base import Metadata
-        from cStringIO import StringIO
-        mi = Metadata(book['title'])
-        mi.authors     = authors
-        mi.author_sort = mi.authors[0]
-        mi.publisher   = book['publisher']
-        mi.comments    = book['summary']
-        mi.isbn        = book.get('isbn13', None)
-        mi.tags        = [ t['name'] for t in book['tags'] ][:8]
-        mi.rating      = int(float(book['rating']['average']))
-        mi.pubdate     = self.str2date(book['pubdate'])
-        mi.timestamp   = datetime.datetime.now()
-        mi.douban_id   = book['id']
-        mi.douban_author_intro = book['author_intro']
-        mi.douban_subtitle = book.get('subtitle', None)
-        mi.website     = "https://book.douban.com/isbn/%s" % mi.isbn
-        mi.source      = u'豆瓣'
 
-        mi.cover_url = book['images']['large']
+        meta = Metadata(mi.title)
+        for k, v in mi.items():
+            setattr(meta, k, v)
+
         if self.copy_image:
-            img = StringIO(urlopen(mi.cover_url).read())
-            img_fmt = mi.cover_url.split(".")[-1]
-            mi.cover_data = (img_fmt, img)
+            img = StringIO(urlopen(meta.cover_url).read())
+            img_fmt = meta.cover_url.split(".")[-1]
+            meta.cover_data = (img_fmt, img)
 
         logging.debug("=================\ndouban metadata:\n%s" % mi)
-        return mi
+        return meta
+
 
 def get_douban_metadata(mi):
     api = DoubanBookApi()
@@ -144,6 +166,7 @@ def get_douban_metadata(mi):
         logging.error(traceback.format_exc())
         return None
 
+
 def select_douban_metadata(mi):
     api = DoubanBookApi()
     try:
@@ -152,6 +175,7 @@ def select_douban_metadata(mi):
         import traceback
         logging.error(traceback.format_exc())
         return None
+
 
 if __name__ == "__main__":
     if len(sys.argv) != 2:
@@ -164,5 +188,3 @@ if __name__ == "__main__":
     books = api.get_books_by_title(sys.argv[1].decode('UTF-8'))
     from pprint import pprint
     pprint(books)
-
-
